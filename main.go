@@ -1,42 +1,63 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"os"
-	"regexp"
-	"text/template"
+
+	"go.austindrenski.io/gotter/templates"
+	"go.austindrenski.io/gotter/utils"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
 )
 
-var functions = template.FuncMap{
-	"match": func(pattern string, source string) (bool, error) {
-		return regexp.MatchString(pattern, source)
-	},
-	"replace": func(pattern string, replacement string, source string) string {
-		return regexp.MustCompile(pattern).ReplaceAllString(source, replacement)
-	},
-}
+const scopeName = "go.austindrenski.io/gotter"
 
 func main() {
-	var data string
-	var text string
+	ctx := context.Background()
 
-	flag.StringVar(&data, "data", "{}", "The data passed to the template")
-	flag.StringVar(&text, "text", "", "The text template to execute")
+	end := utils.Start(ctx)
+	defer end(ctx)
+
+	ctx, span := otel.Tracer(scopeName).Start(ctx, "main")
+	defer span.End()
+
+	var data string
+	var name string
+	var text string
+	var version bool
+
+	flag.StringVar(&data, "data", "", "The JSON data passed to the template")
+	flag.StringVar(&name, "name", "", "An optional name for the template")
+	flag.StringVar(&text, "text", "", "The Go text template to execute")
+	flag.BoolVar(&version, "version", false, "Print version information and quit")
 	flag.Parse()
 
+	if version {
+		fmt.Printf("gotter version %s, build %s\n", utils.OTEL_VCS_REF_HEAD_NAME, utils.OTEL_VCS_REF_HEAD_REVISION)
+		return
+	}
+
 	var d any
-	if err := json.Unmarshal([]byte(data), &d); err != nil {
+	if len(data) == 0 {
+		d = nil
+	} else if err := json.Unmarshal([]byte(data), &d); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to unmarshall data as JSON")
 		log.Fatal(err)
 	}
 
-	t, err := template.New("").Funcs(functions).Parse(text)
-	if err != nil {
+	if t, err := templates.Parse(ctx, name, text, templates.WithFuncs(templates.Functions)); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to parse template")
 		log.Fatal(err)
-	}
-
-	if err := t.Execute(os.Stdout, d); err != nil {
+	} else if err := templates.Execute(ctx, t, d, os.Stdout); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to execute template")
 		log.Fatal(err)
 	}
 }
