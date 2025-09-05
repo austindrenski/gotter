@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  merge_group:
+    types:
+    - checks_requested
+  pull_request:
+    paths-ignore:
+    - '**.md'
+  push:
+    branches:
+    - main
+    - release/*
+    tags:
+    - v*
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  bake:
+    env:
+      OTEL_CICD_PIPELINE_RUN_ID: ${{ github.run_id }}
+      OTEL_CICD_PIPELINE_RUN_URL_FULL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      OTEL_VCS_CHANGE_ID: ${{ github.event.pull_request.number }}
+      OTEL_VCS_OWNER_NAME: ${{ github.repository_owner }}
+      OTEL_VCS_REF_BASE_NAME: ${{ github.base_ref }}
+      OTEL_VCS_REF_HEAD_NAME: ${{ github.head_ref || github.ref_name }}
+      OTEL_VCS_REF_HEAD_REVISION: ${{ github.sha }}
+      OTEL_VCS_REF_HEAD_TYPE: ${{ github.ref_type }}
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Setup Buildx
+      uses: docker/setup-buildx-action@v3.11.1
+
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@v3.5.0
+      with:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+        registry: ghcr.io
+
+    - name: SOURCE_DATE_EPOCH (https://reproducible-builds.org/docs/source-date-epoch/)
+      id: SOURCE_DATE_EPOCH
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: echo "SOURCE_DATE_EPOCH=$(gh api /repos/${{ github.repository }}/commits/"${{ github.sha }}" --jq '.commit.committer.date | fromdate')" >>"${{ github.env }}"
+
+    - name: Bake container images
+      uses: docker/bake-action@v6.9.0
+      env:
+        BUILDX_GIT_CHECK_DIRTY: true
+        BUILDX_GIT_LABELS: true
+        BUILDX_METADATA_WARNINGS: true
+      with:
+        push: true
+        provenance: mode=max # TODO: open an issue with docker/bake-action to respect explicit provenance attestations in our docker-bake.hcl file
+        targets: default
