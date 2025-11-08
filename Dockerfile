@@ -1,5 +1,5 @@
 ARG BUILDPLATFORM
-FROM --platform="${BUILDPLATFORM}" golang:1.25.1 AS vendor
+FROM --platform="${BUILDPLATFORM}" golang:1.25.4 AS vendor
 WORKDIR /build/
 
 COPY --link --parents go.mod .
